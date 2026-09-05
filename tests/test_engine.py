@@ -122,6 +122,103 @@ class EngineTests(unittest.TestCase):
         with self.assertRaisesRegex(e.UserError,"共线"):
             e.analyze({"hypothesis":hypothesis(),"model":{"method":"regression","confidence":.95,"hac_lags":5},"dataset":data})
 
+    def test_regime_boundaries_cover_all_samples_and_reconcile(self):
+        x = np.tile([-2., -1., 0., 1., 2.], 40)
+        y = np.arange(len(x), dtype=float) - 80
+        frame = pd.DataFrame({"x": x, "y": y})
+        h = hypothesis(); h["flat_band"] = 1
+        result = e.compare_regimes(frame, h, .95, 5)
+        groups = {g["id"]: g for g in result["groups"]}
+        self.assertEqual([groups[k]["count"] for k in ("up", "flat", "down")], [40, 120, 40])
+        self.assertAlmostEqual(sum(g["mean"] * g["count"] for g in groups.values()) / len(x), y.mean())
+        for key, mask in {"up": x > 1, "flat": abs(x) <= 1, "down": x < -1}.items():
+            g = groups[key]
+            self.assertAlmostEqual(g["median"], np.median(y[mask]))
+            self.assertAlmostEqual(g["negative_rate"], np.mean(y[mask] < 0) * 100)
+            self.assertAlmostEqual(g["positive_rate"] + g["negative_rate"] + g["zero_rate"], 100)
+
+    def test_regime_hac_interval_matches_independent_sandwich_calculation(self):
+        from scipy.stats import t
+        rng = np.random.default_rng(551)
+        n, lags = 300, 5
+        x = rng.choice([-1., 0., 1.], n)
+        noise = rng.normal(size=n)
+        for i in range(1, n): noise[i] += .6 * noise[i-1]
+        y = -1.5 * x + noise
+        frame = pd.DataFrame({"x": x, "y": y})
+        h = hypothesis(); h["flat_band"] = .1
+        result = e.compare_regimes(frame, h, .95, lags)
+        design = np.column_stack([x > .1, abs(x) <= .1, x < -.1]).astype(float)
+        bread = np.linalg.inv(design.T @ design)
+        means = bread @ design.T @ y
+        scores = design * (y - design @ means)[:, None]
+        meat = scores.T @ scores
+        for lag in range(1, lags + 1):
+            cross = scores[lag:].T @ scores[:-lag]
+            meat += (1 - lag / (lags + 1)) * (cross + cross.T)
+        cov = bread @ meat @ bread * n / (n - 3)
+        for pair, contrast in zip(result["pairs"], [[1,-1,0], [1,0,-1], [0,1,-1]]):
+            c = np.array(contrast)
+            effect = c @ means
+            se = np.sqrt(c @ cov @ c)
+            delta = t.ppf(1 - .05 / 6, n - 3) * se
+            np.testing.assert_allclose(pair["ci"], [effect-delta, effect+delta], atol=1e-10)
+            self.assertAlmostEqual(pair["p_adjusted"], min(1, 6*t.sf(abs(effect/se), n-3)))
+            self.assertGreater(delta, t.ppf(.975, n-3) * se)
+
+    def test_missing_and_sparse_regimes_are_not_reported_as_zero(self):
+        rng = np.random.default_rng(552)
+        for flat_count in (0, 4):
+            x = np.r_[np.ones(80), np.zeros(flat_count), -np.ones(80)]
+            frame = pd.DataFrame({"x": x, "y": -x + rng.normal(0, .3, len(x))})
+            result = e.compare_regimes(frame, hypothesis(), .95, 5)
+            flat = result["groups"][1]
+            self.assertEqual(flat["count"], flat_count)
+            if flat_count == 0:
+                self.assertIsNone(flat["mean"])
+                self.assertIsNone(flat["negative_rate"])
+            for p in (result["pairs"][0], result["pairs"][2]):
+                self.assertIsNone(p["ci"])
+                self.assertIsNone(p["p_adjusted"])
+                self.assertIn("样本不足", p["status"])
+            self.assertLess(result["pairs"][1]["ci"][1], 0)
+            e.json.dumps(result, allow_nan=False)
+
+    def test_level_is_not_mislabelled_as_rising(self):
+        h = hypothesis(); h["x_transform"] = "level"
+        result = e.compare_regimes(pd.DataFrame({"x": [50,60], "y": [1,2]}), h, .95, 5)
+        self.assertFalse(result["available"])
+        self.assertIn("不能把高价叫作上涨", result["note"])
+
+    def test_weaker_positive_returns_are_not_called_a_fall(self):
+        rng = np.random.default_rng(553); n = 650
+        dates = pd.bdate_range("2020-01-01", periods=n)
+        x = rng.normal(size=n)
+        outcome = 2 - (x >= 0) + rng.normal(0, .1, n)
+        target = 100 + np.r_[0, np.cumsum(outcome[:-1])]
+        data = dataset(np.cumsum(x), target, dates)
+        h = hypothesis("event"); h["direction"] = "negative"; h["flat_band"] = .2
+        out = e.analyze({"hypothesis":h, "model":{"method":"event","confidence":.95,"hac_lags":5}, "dataset":data})
+        self.assertEqual(out["verdict_code"], "supported")
+        self.assertGreater(out["group"]["event_mean"], 0)
+        self.assertLess(out["effect"], 0)
+        self.assertIn("平均结果并未下跌", "".join(out["takeaways"]))
+        self.assertEqual(sum(g["count"] for g in out["comparison"]["groups"]), out["n"])
+        e.json.dumps(out, allow_nan=False)
+
+    def test_verdict_distinguishes_inconclusive_opposite_and_two_sided(self):
+        h = hypothesis(); c = {"available":False,"note":"原水平"}
+        code, _, details = e.conclusion(h, "regression", -.01, [-.1,.1], None, c, "%", "个百分点/X 单位")
+        self.assertEqual(code, "inconclusive")
+        self.assertIn("不等于证明没有关系", "".join(details))
+        code, _, details = e.conclusion(h, "regression", -.2, [-.3,-.1], None, c, "%", "个百分点/X 单位")
+        self.assertEqual(code, "opposite")
+        self.assertIn("0.2个百分点", details[0])
+        h["direction"] = "two_sided"
+        code, verdict, _ = e.conclusion(h, "regression", -.2, [-.3,-.1], None, c, "%", "个百分点/X 单位")
+        self.assertEqual(code, "supported")
+        self.assertIn("存在差异或关系", verdict)
+
 
 if __name__=="__main__":
     unittest.main()

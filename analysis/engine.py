@@ -293,6 +293,94 @@ def block_indices(n, size, rng):
     return np.concatenate([(np.arange(size) + start) % n for start in starts])[:n]
 
 
+def describe_group(values):
+    n = len(values)
+    return {"count": n, "mean": float(values.mean()) if n else None,
+            "median": float(values.median()) if n else None,
+            "positive_rate": float((values > 0).mean() * 100) if n else None,
+            "negative_rate": float((values < 0).mean() * 100) if n else None,
+            "zero_rate": float((values == 0).mean() * 100) if n else None}
+
+
+def compare_regimes(frame, h, confidence, lags):
+    """Predefined descriptive groups; contrasts retain the full chronological sample."""
+    import statsmodels.api as sm
+
+    if h["x_transform"] == "level":
+        return {"available": False, "note": "X 使用原数值水平，不能把高价叫作上涨、低价叫作下跌。若要比较涨跌情形，请将 X 改为涨跌幅或原单位变化后重新确认假设。"}
+    band = float(h.get("flat_band", 0))
+    if not math.isfinite(band) or band < 0:
+        raise UserError("平稳区间的半宽必须是大于或等于 0 的有限数值")
+    unit = "%" if h["x_transform"] == "return" else "（X 原单位）"
+    masks = {"up": frame.x > band, "flat": frame.x.between(-band, band), "down": frame.x < -band}
+    names = {"up": "上涨", "flat": "平稳", "down": "下跌"}
+    rules = {"up": f"X > {band:g}{unit}", "flat": f"{-band:g}{unit} ≤ X ≤ {band:g}{unit}", "down": f"X < {-band:g}{unit}"}
+    groups = [{"id": k, "label": names[k], "rule": rules[k], **describe_group(frame.loc[mask, "y"])} for k, mask in masks.items()]
+    present = [g["id"] for g in groups if g["count"]]
+    # No intercept: each coefficient is a group mean. Do not compress time by dropping the third group.
+    design = pd.DataFrame({k: masks[k].astype(float) for k in present}, index=frame.index)
+    fit = sm.OLS(frame.y, design).fit(cov_type="HAC", cov_kwds={"maxlags": lags, "use_correction": True}, use_t=True)
+    counts = {g["id"]: g["count"] for g in groups}
+    pairs = []
+    for left, right in [("up", "flat"), ("up", "down"), ("flat", "down")]:
+        pair = {"label": f"{names[left]} − {names[right]}", "left": left, "right": right,
+                "effect": None, "ci": None, "p_adjusted": None}
+        if min(counts[left], counts[right]) < 15:
+            pair["status"] = "样本不足：两组各需至少 15 个有效观测"
+        else:
+            contrast = np.array([float(k == left) - float(k == right) for k in present])
+            test = fit.t_test(contrast)
+            effect = float(np.asarray(test.effect).item())
+            ci = test.conf_int(alpha=(1 - confidence) / 3)[0].tolist()
+            p = min(1., float(np.asarray(test.pvalue).item()) * 3)
+            if not all(math.isfinite(v) for v in [effect, *ci, p]) or float(np.asarray(test.sd).item()) <= 0:
+                pair["status"] = "组内变化不足，无法估计可靠区间"
+            else:
+                pair.update(effect=effect, ci=ci, p_adjusted=p,
+                            status="前组平均结果更高" if ci[0] > 0 else "前组平均结果更低" if ci[1] < 0 else "证据不足，尚不能确认两组存在差异")
+        pairs.append(pair)
+    note = (f"平稳区间含两端边界，半宽为 {band:g}{unit}，在确认假设时设定。三组互不重叠，合计为全部有效样本；"
+            "平均值、中位数和涨跌比例描述历史样本，比例未单独做显著性检验。组间均值差使用完整样本顺序的 OLS + HAC，"
+            f"三项预设比较采用 Bonferroni 校正，整体置信水平 {confidence:.0%}（近似，依赖 HAC 假设）。"
+            "补充对照不替代主检验，也没有消除其他因素的影响。")
+    if h.get("controls"):
+        note += "主回归包含控制变量；这里的组均值和组间差未调整控制变量，两者可能不同。"
+    return {"available": True, "flat_band": band, "groups": groups, "pairs": pairs,
+            "overall": describe_group(frame.y), "note": note}
+
+
+def conclusion(h, method, effect, ci, group, comparison, y_unit, effect_unit):
+    excludes_zero = ci[0] > 0 or ci[1] < 0
+    expected = h["direction"] == "two_sided" or (effect > 0 if h["direction"] == "positive" else effect < 0)
+    code = "supported" if excludes_zero and expected else "opposite" if excludes_zero else "inconclusive"
+    verdict = {"supported": "支持：本区间的历史关联与预期一致", "opposite": "相反：本区间的历史关联与预期相反", "inconclusive": "证据不足：尚不能确认预期的差异或关系"}[code]
+    if h["direction"] == "two_sided" and excludes_zero:
+        verdict = "存在差异或关系：本区间的区间估计不含零"
+    details = []
+    if method == "event":
+        details.append(f"条件成立时，Y 平均为 {group['event_mean']:.4g}{y_unit}；条件不成立时为 {group['control_mean']:.4g}{y_unit}。前者比后者{'高' if effect >= 0 else '低'} {abs(effect):.4g}{effect_unit}。")
+        details.append(f"条件组的负变化比例为 {group['event_negative_rate']:.1f}%，对照组为 {group['control_negative_rate']:.1f}%；这是样本比例，未检验该比例差是否显著。")
+        if group["event_mean"] >= 0 and effect < 0:
+            details.append("条件组只是相对更弱，其平均结果并未下跌；不能据此写成“条件出现后股价下跌”。")
+        elif group["event_mean"] <= 0 and effect > 0:
+            details.append("条件组只是相对更强，其平均结果并未上涨；不能据此写成“条件出现后股价上涨”。")
+    elif method == "regression":
+        delta_unit = "个百分点" if y_unit == "%" else y_unit
+        details.append(f"X 每增加 1 单位，Y 的拟合平均结果{'增加' if effect >= 0 else '减少'} {abs(effect):.4g}{delta_unit}。" + ("这是在模型中控制所选变量后的线性关联。" if h.get("controls") else "这是未控制其他因素的线性关联。"))
+    else:
+        details.append(f"相关系数为 {effect:.4g}（无量纲）；它衡量{'线性' if method == 'pearson' else '排序的单调'}关系，不能读成收益率或下跌概率。")
+    if comparison["available"]:
+        observations = []
+        for g in comparison["groups"]:
+            observations.append(f"X {g['label']}时 Y 平均 {g['mean']:.4g}{y_unit}（{g['count']} 个样本）" if g["count"] else f"X {g['label']}时没有有效样本")
+        details.append("反面与基准：" + "；".join(observations) + "。不能只看其中一组；具体差异是否清楚见下方校正区间。")
+    else:
+        details.append(comparison["note"])
+    details.append("区间包含零：现有数据不足以区分效应与零；这不等于证明没有关系。可预先扩大观察区间或补充数据。" if not excludes_zero else "区间不含零说明当前模型下有统计证据；不代表效应足够大，也不代表每次都会发生。")
+    details.append("适用范围仅限本次日期、标的、窗口和已确认口径；不能证明因果，也不保证未来表现。")
+    return code, verdict, details
+
+
 def analyze(request):
     from scipy import stats
     import statsmodels.api as sm
@@ -322,7 +410,11 @@ def analyze(request):
             group_info = {"event_count": count, "control_count": n-count,
                           "event_mean": float(frame.loc[condition, "y"].mean()), "control_mean": float(frame.loc[~condition, "y"].mean()),
                           "event_positive_rate": float((frame.loc[condition, "y"] > 0).mean()) * 100,
-                          "control_positive_rate": float((frame.loc[~condition, "y"] > 0).mean()) * 100}
+                          "control_positive_rate": float((frame.loc[~condition, "y"] > 0).mean()) * 100,
+                          "event_negative_rate": float((frame.loc[condition, "y"] < 0).mean()) * 100,
+                          "control_negative_rate": float((frame.loc[~condition, "y"] < 0).mean()) * 100,
+                          "event_median": float(frame.loc[condition, "y"].median()),
+                          "control_median": float(frame.loc[~condition, "y"].median())}
             effect_name = "条件组减去对照组的平均结果差"
         else:
             design = frame[["x"] + controls]
@@ -366,12 +458,16 @@ def analyze(request):
     if not all(math.isfinite(v) for v in [effect, *ci]) or (p_value is not None and not math.isfinite(p_value)):
         raise UserError("数值计算退化，无法给出可靠置信区间")
     excludes_zero = ci[0] > 0 or ci[1] < 0
-    expected = h["direction"] == "two_sided" or (effect > 0 if h["direction"] == "positive" else effect < 0)
-    verdict = "当前样本支持假设方向" if excludes_zero and expected else ("当前样本显示相反方向" if excludes_zero else "证据不足")
-    explanation = f"有效样本 {n} 个，{effect_name}为 {effect:.5g}，{confidence:.0%} 置信区间 [{ci[0]:.5g}, {ci[1]:.5g}]。"
+    y_unit = "%" if h["y_transform"] == "return" else "（Y 原单位）"
+    effect_unit = "（无量纲）" if method in ("pearson", "spearman") else "个百分点" if h["y_transform"] == "return" else "（Y 原单位）"
+    if method == "regression":
+        effect_unit += "/X 单位"
+    comparison = compare_regimes(frame, h, confidence, lags)
+    verdict_code, verdict, takeaways = conclusion(h, method, effect, ci, group_info, comparison, y_unit, effect_unit)
+    explanation = f"有效样本 {n} 个，{effect_name}为 {effect:.5g}{effect_unit}，{confidence:.0%} 置信区间 [{ci[0]:.5g}, {ci[1]:.5g}]{effect_unit}。"
     if p_value is not None:
         explanation += f" 双侧 p 值 {p_value:.4g}。"
-    explanation += "该区间" + ("未跨过零。" if excludes_zero else "跨过零，不能据此确认存在差异或关系。")
+    explanation += "该区间" + ("不含零。" if excludes_zero else "包含零，不能据此确认存在差异或关系。")
     rows = [{"date": index.strftime("%Y-%m-%d"), **{k: float(v) for k, v in row.items()}} for index, row in frame.iterrows()]
     chart_series = []
     for role in ("target", "signal"):
@@ -380,7 +476,9 @@ def analyze(request):
         chart_series.append({"role": role, "label": dataset["series"][role]["spec"].get("label") or role,
                              "points": [{"date": i.strftime("%Y-%m-%d"), "value": float(v)} for i, v in s.iloc[::stride].items()]})
     hist_counts, hist_edges = np.histogram(frame["y"], bins=min(30, max(8, int(math.sqrt(n)))))
-    return {"verdict": verdict, "explanation": explanation, "effect": effect, "effect_name": effect_name,
+    return {"verdict": verdict, "verdict_code": verdict_code, "takeaways": takeaways,
+            "comparison": comparison, "y_unit": y_unit, "effect_unit": effect_unit,
+            "explanation": explanation, "effect": effect, "effect_name": effect_name,
             "confidence": confidence, "ci": ci, "p_value": p_value, "n": n, "candidate_count": candidates,
             "start": frame.index[0].strftime("%Y-%m-%d"), "end": frame.index[-1].strftime("%Y-%m-%d"),
             "model_detail": model_detail, "group": group_info, "bootstrap": bootstrap_info,

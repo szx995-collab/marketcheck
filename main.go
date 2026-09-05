@@ -145,6 +145,8 @@ func (a *App) snapshot(id string) *Run {
 		b, _ := json.Marshal(r)
 		var copy Run
 		_ = json.Unmarshal(b, &copy)
+		// Preserve raw formatting for the result identity check, including runs loaded from disk.
+		copy.Result = append(json.RawMessage(nil), r.Result...)
 		return &copy
 	}
 	return nil
@@ -175,10 +177,13 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		switch path {
 		case "bootstrap":
-			respond(w, map[string]any{"settings": a.config().Public(), "catalog": catalog, "history": a.history()})
+			respond(w, map[string]any{"settings": a.config().Public(), "providers": modelProviders, "catalog": catalog, "history": a.history(), "glossary": statisticsTerms})
 			return
 		case "history":
 			respond(w, a.history())
+			return
+		case "codex/status":
+			respond(w, readCodexStatus(r.Context()))
 			return
 		case "health":
 			data, err := a.worker(r.Context(), map[string]string{"op": "health"}, "")
@@ -216,25 +221,35 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &input) {
 			return
 		}
-		if !oneOf(input.Provider, "deepseek", "openai") || len(input.Model) < 1 || len(input.Model) > 100 {
+		input.Model = strings.TrimSpace(input.Model)
+		_, validProvider := providerByID(input.Provider)
+		if !validProvider || (input.Model == "" && input.Provider != "codex") || len(input.Model) > 100 {
 			fail(w, errors.New("请选择服务并填写模型名"))
 			return
 		}
 		a.mu.Lock()
 		s := a.settings
-		if input.Clear {
-			s.DeepseekKey = ""
-			s.OpenAIKey = ""
-			s.FredKey = ""
+		if input.CompatibleBaseURL != "" || input.Provider == "compatible" {
+			endpoint, err := compatibleEndpoint(input.CompatibleBaseURL)
+			if err != nil {
+				a.mu.Unlock()
+				fail(w, err)
+				return
+			}
+			oldEndpoint, _ := compatibleEndpoint(s.CompatibleBaseURL)
+			if endpoint != oldEndpoint {
+				s.CompatibleKey = ""
+			}
+			s.CompatibleBaseURL = strings.TrimSpace(input.CompatibleBaseURL)
+			s.CompatibleJSONMode = input.CompatibleJSONMode
 		}
-		if input.DeepseekKey != "" {
-			s.DeepseekKey = strings.TrimSpace(input.DeepseekKey)
-		}
-		if input.OpenAIKey != "" {
-			s.OpenAIKey = strings.TrimSpace(input.OpenAIKey)
-		}
-		if input.FredKey != "" {
-			s.FredKey = strings.TrimSpace(input.FredKey)
+		for id, key := range s.keyFields() {
+			if input.Clear {
+				*key = ""
+			}
+			if value := strings.TrimSpace(*input.Settings.keyFields()[id]); value != "" {
+				*key = value
+			}
 		}
 		s.Provider = input.Provider
 		s.Model = strings.TrimSpace(input.Model)
@@ -258,10 +273,16 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(w, s.Public())
 	case "test-model":
-		var out map[string]any
+		var out struct {
+			OK bool `json:"ok"`
+		}
 		err := callLLM(r.Context(), a.config(), `仅返回 {"ok":true}`, "连接测试", &out)
 		if err != nil {
 			fail(w, err)
+			return
+		}
+		if !out.OK {
+			fail(w, errors.New("模型未正确完成连接测试，请重试"))
 			return
 		}
 		respond(w, map[string]bool{"ok": true})

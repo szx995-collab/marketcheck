@@ -138,25 +138,27 @@ func (a *App) runAction(w http.ResponseWriter, r *http.Request, id, action strin
 		delete(result, "points")
 		delete(result, "rows")
 		var out struct {
-			Text string `json:"text"`
+			TermIDs []string `json:"term_ids"`
 		}
-		err := callLLM(r.Context(), s, interpretPrompt, map[string]any{"hypothesis": run.Summary, "model": run.Model, "result": result}, &out)
+		err := callLLM(r.Context(), s, interpretPrompt, map[string]any{"hypothesis": run.Summary, "model": run.Model, "result": result, "glossary": statisticsTerms}, &out)
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		if strings.TrimSpace(out.Text) == "" {
-			fail(w, errors.New("AI 返回了空解读，请重试"))
+		text, err := groundedInterpretation(run, out.TermIDs)
+		if err != nil {
+			fail(w, err)
 			return
 		}
 		a.mu.Lock()
 		current := a.runs[id]
 		if current.Status == "complete" && string(current.Result) == string(run.Result) {
-			current.Narrative = out.Text
+			current.Narrative = text
+			current.NarrativeVersion = 2
 			_ = a.saveLocked(current)
 		}
 		a.mu.Unlock()
-		respond(w, out)
+		respond(w, map[string]string{"text": text})
 	default:
 		http.NotFound(w, r)
 	}
@@ -173,6 +175,7 @@ func (a *App) beginJob(id, status, message string, clearData bool) bool {
 	r.Message = message
 	r.Result = nil
 	r.Narrative = ""
+	r.NarrativeVersion = 0
 	r.Confirmed = false
 	r.Model = nil
 	if clearData {

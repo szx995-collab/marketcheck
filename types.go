@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ type Hypothesis struct {
 	Lag        int          `json:"lag"`
 	Operator   string       `json:"operator"`
 	Threshold  float64      `json:"threshold"`
+	FlatBand   float64      `json:"flat_band"`
 	Direction  string       `json:"direction"`
 }
 
@@ -96,6 +98,9 @@ func (h Hypothesis) Validate() error {
 	if h.Kind == "event" && len(h.Controls) > 0 {
 		return errors.New("条件比较暂不支持控制变量；请切换变量关系 / 回归")
 	}
+	if math.IsNaN(h.FlatBand) || math.IsInf(h.FlatBand, 0) || h.FlatBand < 0 {
+		return errors.New("平稳区间的半宽必须是大于或等于 0 的有限数值")
+	}
 	if len(h.Original) > 6000 {
 		return errors.New("假设过长，请控制在 6000 字以内")
 	}
@@ -134,6 +139,9 @@ func (h Hypothesis) Summary() string {
 		base += fmt.Sprintf("：比较信号 %s %.4g 与不满足条件的样本。", op, h.Threshold)
 	} else {
 		base += "的关系。"
+	}
+	if h.XTransform != "level" {
+		base += fmt.Sprintf("补充对照：X > %.4g 为上涨，X < %.4g 为下跌，其余为平稳（含边界，单位与 X 相同）。", h.FlatBand, -h.FlatBand)
 	}
 	return base + "预期方向：" + map[string]string{"positive": "正向 / 高于对照", "negative": "负向 / 低于对照", "two_sided": "双向差异"}[h.Direction]
 }
@@ -175,18 +183,19 @@ type Clarification struct {
 	Draft     Hypothesis `json:"draft"`
 }
 type Run struct {
-	ID             string          `json:"id"`
-	Created        string          `json:"created"`
-	Status         string          `json:"status"`
-	Message        string          `json:"message"`
-	Hypothesis     Hypothesis      `json:"hypothesis"`
-	Summary        string          `json:"summary"`
-	Data           json.RawMessage `json:"data,omitempty"`
-	Recommendation *ModelSpec      `json:"recommendation,omitempty"`
-	Model          *ModelSpec      `json:"model,omitempty"`
-	Confirmed      bool            `json:"model_confirmed"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	Narrative      string          `json:"narrative,omitempty"`
+	ID               string          `json:"id"`
+	Created          string          `json:"created"`
+	Status           string          `json:"status"`
+	Message          string          `json:"message"`
+	Hypothesis       Hypothesis      `json:"hypothesis"`
+	Summary          string          `json:"summary"`
+	Data             json.RawMessage `json:"data,omitempty"`
+	Recommendation   *ModelSpec      `json:"recommendation,omitempty"`
+	Model            *ModelSpec      `json:"model,omitempty"`
+	Confirmed        bool            `json:"model_confirmed"`
+	Result           json.RawMessage `json:"result,omitempty"`
+	Narrative        string          `json:"narrative,omitempty"`
+	NarrativeVersion int             `json:"narrative_version,omitempty"`
 }
 
 func cleanError(err error, secrets ...string) string {

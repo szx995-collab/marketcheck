@@ -7,36 +7,56 @@ import (
 )
 
 type Settings struct {
-	Provider    string `json:"provider"`
-	Model       string `json:"model"`
-	DeepseekKey string `json:"deepseek_key"`
-	OpenAIKey   string `json:"openai_key"`
-	FredKey     string `json:"fred_key"`
-	Remember    bool   `json:"remember"`
+	Provider           string `json:"provider"`
+	Model              string `json:"model"`
+	DeepseekKey        string `json:"deepseek_key"`
+	OpenAIKey          string `json:"openai_key"`
+	GLMKey             string `json:"glm_key"`
+	KimiKey            string `json:"kimi_key"`
+	ClaudeKey          string `json:"claude_key"`
+	GrokKey            string `json:"grok_key"`
+	CompatibleKey      string `json:"compatible_key"`
+	CompatibleBaseURL  string `json:"compatible_base_url"`
+	CompatibleJSONMode bool   `json:"compatible_json_mode"`
+	FredKey            string `json:"fred_key"`
+	Remember           bool   `json:"remember"`
 }
 
 func (s Settings) Key() string {
-	if s.Provider == "openai" {
-		return s.OpenAIKey
+	if key := s.keyFields()[s.Provider]; key != nil {
+		return *key
 	}
-	return s.DeepseekKey
+	return ""
+}
+func (s *Settings) keyFields() map[string]*string {
+	return map[string]*string{"deepseek": &s.DeepseekKey, "openai": &s.OpenAIKey, "glm": &s.GLMKey, "kimi": &s.KimiKey, "claude": &s.ClaudeKey, "grok": &s.GrokKey, "compatible": &s.CompatibleKey, "fred": &s.FredKey}
 }
 func (s Settings) Public() map[string]any {
-	return map[string]any{"provider": s.Provider, "model": s.Model, "deepseek_configured": s.DeepseekKey != "", "openai_configured": s.OpenAIKey != "", "fred_configured": s.FredKey != "", "remember": s.Remember}
+	out := map[string]any{"provider": s.Provider, "model": s.Model, "remember": s.Remember, "compatible_base_url": s.CompatibleBaseURL, "compatible_json_mode": s.CompatibleJSONMode}
+	for id, key := range s.keyFields() {
+		out[id+"_configured"] = *key != ""
+	}
+	return out
 }
 func loadSettings(dir string) Settings {
 	s := Settings{Provider: "deepseek", Model: "deepseek-v4-flash"}
 	if b, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(b, &s)
 	}
-	if k := os.Getenv("DEEPSEEK_API_KEY"); k != "" {
-		s.DeepseekKey = k
+	if base := os.Getenv("COMPATIBLE_BASE_URL"); base != "" && base != s.CompatibleBaseURL {
+		s.CompatibleBaseURL, s.CompatibleKey = base, ""
 	}
-	if k := os.Getenv("OPENAI_API_KEY"); k != "" {
-		s.OpenAIKey = k
-	}
-	if k := os.Getenv("FRED_API_KEY"); k != "" {
-		s.FredKey = k
+	for id, names := range map[string][]string{
+		"deepseek": {"DEEPSEEK_API_KEY"}, "openai": {"OPENAI_API_KEY"}, "fred": {"FRED_API_KEY"},
+		"glm": {"GLM_API_KEY", "ZHIPUAI_API_KEY"}, "kimi": {"MOONSHOT_API_KEY", "KIMI_API_KEY"},
+		"claude": {"ANTHROPIC_API_KEY", "CLAUDE_API_KEY"}, "grok": {"XAI_API_KEY", "GROK_API_KEY"}, "compatible": {"COMPATIBLE_API_KEY"},
+	} {
+		for _, name := range names {
+			if key := os.Getenv(name); key != "" {
+				*s.keyFields()[id] = key
+				break
+			}
+		}
 	}
 	return s
 }
