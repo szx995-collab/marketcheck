@@ -1,0 +1,12 @@
+.local/
+.tools/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+marketcheck.exe
+marketcheck
+*.log
+.pytest_cache/

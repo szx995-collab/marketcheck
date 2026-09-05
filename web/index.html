@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#163a33">
+  <title>MarketCheck · 市场假设检验</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-icon">M<span>↗</span></span><span>MarketCheck<small>市场假设检验</small></span></a>
+    <button class="new-button" data-action="new">＋ 新建检验</button>
+    <div class="sidebar-heading">最近的检验 <span id="history-count"></span></div>
+    <nav id="history" aria-label="历史检验"></nav>
+    <div class="sidebar-bottom"><div class="local-badge"><i></i> 本地运行 · 个人工作台</div><button class="settings-button" data-action="settings">⚙ 模型与数据源设置 <span>↗</span></button></div>
+  </aside>
+  <main>
+    <header class="topbar"><span>研究工作台 <span class="separator">/</span> <b>假设检验</b></span><button id="connection" class="connection" data-action="settings">配置连接</button></header>
+    <div class="workspace"><nav id="steps" class="steps" aria-label="检验步骤"></nav><div id="app"></div></div>
+    <footer>用数据回答一个明确的问题。每次计算均由本地内置工具执行。</footer>
+  </main>
+  <div id="notice" class="notice" role="status" hidden></div>
+  <dialog id="settings-dialog">
+    <form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">CONNECTIONS</span><h2>模型与数据源</h2></div><button type="button" class="icon-button" data-action="close-settings" aria-label="关闭">×</button></div>
+      <p class="muted">Key 由本机后端使用；FRED Key 不会发送给大模型。留空会保留已有 Key。</p>
+      <div class="form-grid"><label>模型服务<select name="provider"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI GPT</option></select></label><label>模型名称<input name="model" required placeholder="deepseek-v4-flash"></label></div>
+      <label>DeepSeek API Key <span id="deepseek-state" class="key-state"></span><input name="deepseek_key" type="password" autocomplete="off" placeholder="输入 API Key"></label>
+      <label>OpenAI API Key <span id="openai-state" class="key-state"></span><input name="openai_key" type="password" autocomplete="off" placeholder="使用 GPT 时填写"></label>
+      <label>FRED API Key <span id="fred-state" class="key-state"></span><input name="fred_key" type="password" autocomplete="off" placeholder="获取原油、利率、CPI 等数据"></label>
+      <label class="check-row"><input name="remember" type="checkbox">记住配置与 Key（明文保存到本机 .local，已从 Git 忽略）</label>
+      <label class="check-row"><input name="clear_keys" type="checkbox">清除已保存的全部 Key</label>
+      <div id="settings-status" class="muted" role="status"></div>
+      <div class="actions"><button type="button" class="button secondary" data-action="save-test">保存并测试模型</button><button class="button" type="submit">保存设置</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
