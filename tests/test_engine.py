@@ -26,6 +26,66 @@ def dataset(signal, target, dates):
 
 
 class EngineTests(unittest.TestCase):
+    def test_concurrent_returns_use_same_day_and_keep_last_day(self):
+        dates = pd.bdate_range("2020-01-01", periods=180)
+        x = np.arange(180, dtype=float) ** 2 + 100
+        y = np.arange(180, dtype=float) ** 3 + 200
+        h = hypothesis()
+        h.update(timing="concurrent", x_transform="return", y_transform="return")
+        frame, _, _ = e.prepare(h, dataset(x, y, dates))
+        self.assertAlmostEqual(frame.loc[dates[50], "x"], (x[50] / x[49] - 1) * 100)
+        self.assertAlmostEqual(frame.loc[dates[50], "y"], (y[50] / y[49] - 1) * 100)
+        self.assertIn(dates[-1], frame.index)
+        h["timing"] = "forward"
+        future, _, _ = e.prepare(h, dataset(x, y, dates))
+        self.assertAlmostEqual(future.loc[dates[50], "y"], (y[51] / y[50] - 1) * 100)
+        self.assertNotIn(dates[-1], future.index)
+        del h["timing"]
+        legacy, _, _ = e.prepare(h, dataset(x, y, dates))
+        pd.testing.assert_frame_equal(future, legacy)
+
+    def test_concurrent_missing_dates_reject_mismatched_windows_and_controls(self):
+        dates = pd.bdate_range("2020-01-01", periods=180)
+        values = np.arange(180, dtype=float) ** 2 + 100
+        for role in ("signal", "control1"):
+            data = dataset(values, values * 2, dates)
+            data["series"]["control1"] = item(dates, values * 3)
+            data["series"][role]["rows"].pop(80)
+            h = hypothesis()
+            h.update(timing="concurrent", horizon=3, lookback=3)
+            frame, _, _ = e.prepare(h, data)
+            for day in dates[80:84]:
+                self.assertNotIn(day, frame.index)
+            self.assertIn(dates[84], frame.index)
+            self.assertAlmostEqual(frame.loc[dates[84], "y"], 2 * (values[84] - values[81]))
+
+    def test_concurrent_detects_simultaneous_relation_and_regime_comparisons(self):
+        rng = np.random.default_rng(17)
+        dates = pd.bdate_range("2020-01-01", periods=450)
+        x = rng.normal(size=len(dates))
+        y = 2 * x + rng.normal(0, .1, len(dates))
+        data = dataset(100 + np.cumsum(x), 300 + np.cumsum(y), dates)
+        h = hypothesis()
+        h.update(timing="concurrent", flat_band=.2)
+        model = {"method":"pearson", "confidence":.95, "hac_lags":5}
+        out = e.analyze({"hypothesis":h, "model":model, "dataset":data})
+        self.assertGreater(out["ci"][0], .98)
+        groups = out["comparison"]["groups"]
+        self.assertEqual(sum(g["count"] for g in groups), out["n"])
+        self.assertTrue(any("同期" in w for w in out["warnings"]))
+        h["timing"] = "forward"
+        future = e.analyze({"hypothesis":h, "model":model, "dataset":data})
+        self.assertLess(abs(future["effect"]), .15)
+
+    def test_concurrent_rejects_zero_window_or_lag(self):
+        dates = pd.bdate_range("2020-01-01", periods=100)
+        values = np.arange(100, dtype=float) ** 2 + 100
+        for change in ({"horizon":0}, {"lag":1}, {"lookback":2}):
+            h = hypothesis()
+            h.update(timing="concurrent", **change)
+            with self.assertRaisesRegex(e.UserError, "同期"):
+                e.prepare(h, dataset(values, values, dates))
+
     def test_conflicting_dates_fail(self):
         with self.assertRaisesRegex(e.UserError,"冲突"):
             e.normalize([{"date":"2020-01-01","value":1},{"date":"2020-01-01","value":2}],"2020-01-01","2024-01-01")

@@ -18,6 +18,44 @@ func testHypothesis() Hypothesis {
 	return Hypothesis{Kind: "event", Target: SeriesSpec{"tencent", "sh000300", "沪深300", "value"}, Signal: SeriesSpec{"tencent", "sh000300", "沪深300", "value"}, Start: "2020-01-01", End: "2024-12-31", Frequency: "daily", XTransform: "return", YTransform: "return", Lookback: 1, Horizon: 1, Lag: 0, Operator: "le", Threshold: -1, Direction: "positive"}
 }
 
+func TestConcurrentHypothesisValidationPersistenceAndSummary(t *testing.T) {
+	h := testHypothesis()
+	h.Timing = "concurrent"
+	if err := h.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.Summary(), "同期检验") || strings.Contains(h.Summary(), "随后") {
+		t.Fatal("concurrent summary still describes future")
+	}
+	for _, invalid := range []Hypothesis{
+		func() Hypothesis { v := h; v.Lag = 1; return v }(),
+		func() Hypothesis { v := h; v.Lookback = 2; return v }(),
+		func() Hypothesis { v := h; v.Horizon = 0; return v }(),
+		func() Hypothesis { v := h; v.Timing = "other"; return v }(),
+	} {
+		if invalid.Validate() == nil {
+			t.Fatal("invalid timing accepted")
+		}
+	}
+	a, _ := newApp(t.TempDir())
+	w := requestTest(t, a, "POST", "/api/runs", map[string]any{"hypothesis": h, "confirmed": true})
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	var run Run
+	if err := json.Unmarshal(w.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, _ := newApp(a.root)
+	if got := reloaded.snapshot(run.ID); got == nil || got.Hypothesis.Timing != "concurrent" {
+		t.Fatal("timing lost after restart")
+	}
+	h.Timing = ""
+	if h.Validate() != nil || !strings.Contains(h.Summary(), "随后") {
+		t.Fatal("legacy timing changed")
+	}
+}
+
 func requestTest(t *testing.T, a *App, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(body)

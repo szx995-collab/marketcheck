@@ -26,6 +26,7 @@ type Hypothesis struct {
 	Start      string       `json:"start"`
 	End        string       `json:"end"`
 	Frequency  string       `json:"frequency"`
+	Timing     string       `json:"timing"`
 	XTransform string       `json:"x_transform"`
 	YTransform string       `json:"y_transform"`
 	Lookback   int          `json:"lookback"`
@@ -92,6 +93,12 @@ func (h Hypothesis) Validate() error {
 	if h.Lookback < 1 || h.Lookback > 60 || h.Horizon < 1 || h.Horizon > 20 || h.Lag < 0 || h.Lag > 20 {
 		return errors.New("观察窗口、持有窗口或滞后期超出支持范围")
 	}
+	if !oneOf(h.Timing, "", "forward", "concurrent") {
+		return errors.New("请选择同期关系或后续关系")
+	}
+	if h.Timing == "concurrent" && (h.Lag != 0 || h.Lookback != h.Horizon) {
+		return errors.New("同期检验要求 X、Y 使用相同窗口，且额外滞后为 0")
+	}
 	if !oneOf(h.Operator, "ge", "le") || !oneOf(h.Direction, "positive", "negative", "two_sided") {
 		return errors.New("条件或方向无效")
 	}
@@ -131,6 +138,9 @@ func (h Hypothesis) Summary() string {
 	signal += " [" + h.Signal.Source + ":" + h.Signal.Symbol + " / " + h.Signal.Field + "]"
 	target += " [" + h.Target.Source + ":" + h.Target.Symbol + " / " + h.Target.Field + "]"
 	base := fmt.Sprintf("%s 至 %s，%s的 %d %s%s，滞后 %d %s，与%s随后 %d %s%s", h.Start, h.End, signal, h.Lookback, freq, x, h.Lag, freq, target, h.Horizon, freq, y)
+	if h.Timing == "concurrent" {
+		base = fmt.Sprintf("%s 至 %s，同期检验：%s的 %d %s%s，与%s截至同一期的 %d %s%s", h.Start, h.End, signal, h.Lookback, freq, x, target, h.Horizon, freq, y)
+	}
 	if h.Kind == "event" {
 		op := ">="
 		if h.Operator == "le" {

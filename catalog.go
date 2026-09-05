@@ -12,6 +12,8 @@ var catalog = []CatalogItem{
 	{SeriesSpec{"tencent", "sh600519", "贵州茅台", "value"}, "A 股", "前复权收盘价；腾讯公开日线"},
 	{SeriesSpec{"tencent", "sz000001", "平安银行", "value"}, "A 股", "前复权收盘价；腾讯公开日线"},
 	{SeriesSpec{"yahoo", "SPY", "标普500 ETF · SPY", "value"}, "美股", "ETF 复权收盘价，美元；不是指数点位"},
+	{SeriesSpec{"yahoo", "^GSPC", "标普500指数", "value"}, "美股", "指数收盘点位；不是 ETF"},
+	{SeriesSpec{"yahoo", "^IXIC", "纳斯达克综合指数", "value"}, "美股", "指数收盘点位；不同于纳斯达克100指数或 QQQ"},
 	{SeriesSpec{"yahoo", "QQQ", "纳斯达克100 ETF · QQQ", "value"}, "美股", "ETF 复权收盘价，美元"},
 	{SeriesSpec{"yahoo", "AAPL", "苹果 · AAPL", "value"}, "美股", "股票复权收盘价，美元"},
 	{SeriesSpec{"yahoo", "GC=F", "黄金期货 · GC=F", "value"}, "黄金 / 原油", "黄金期货连续报价，美元/盎司；换月会影响收益，不是现货"},

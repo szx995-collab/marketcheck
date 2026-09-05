@@ -219,6 +219,8 @@ def fetch(request):
                 meta["retrieved_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
                 cache_file.write_text(json.dumps([rows, meta], ensure_ascii=False), encoding="utf-8")
         rows, duplicates = normalize(rows, start, end)
+        if not demo and spec["source"] == "yahoo" and spec["symbol"] in ("^GSPC", "^IXIC", "^NDX") and spec.get("field", "value") == "value":
+            meta = {**meta, "units": "指数点", "adjustment": "指数收盘点位（不是 ETF 价格）"}
         loaded[fingerprint] = (rows, meta)
         in_range = [r for r in rows if h["start"] <= r["date"] <= end]
         if len(in_range) < 10:
@@ -265,9 +267,17 @@ def transform(s, kind, periods):
 
 
 def prepare(h, dataset):
+    timing = h.get("timing") or "forward"  # Old runs retain their original meaning.
+    if timing not in ("forward", "concurrent"):
+        raise UserError("请选择同期关系或后续关系")
+    concurrent = timing == "concurrent"
+    if h["horizon"] < 1 or (concurrent and (h["lag"] != 0 or h["lookback"] != h["horizon"])):
+        raise UserError("同期检验要求相同的正数窗口，且额外滞后为 0")
     raw = {role: frequency_series(item, h["frequency"], h["end"]) for role, item in dataset["series"].items()}
     target = raw["target"]
-    if h["y_transform"] == "return":
+    if concurrent:
+        y = transform(target, h["y_transform"], h["horizon"])
+    elif h["y_transform"] == "return":
         if (target <= 0).any():
             raise UserError("结果序列含零或负值，不能计算百分比收益；请改为数值变化")
         y = (target.shift(-h["horizon"]) / target - 1) * 100
@@ -280,6 +290,17 @@ def prepare(h, dataset):
             features[role] = transform(values, h["x_transform"], h["lookback"]).shift(h["lag"])
     frame = pd.concat(features, axis=1, join="inner")
     candidate_count = len(frame.loc[h["start"]:h["end"]])
+    if concurrent and h["x_transform"] != "level":
+        # Equal end dates alone are insufficient: a missing quote can make one
+        # daily return span two sessions. Keep only matching window start dates.
+        starts = {role: pd.Series(values.index, index=values.index).shift(h["horizon"])
+                  for role, values in raw.items()}
+        target_start = starts["target"].reindex(frame.index)
+        for role in features:
+            if role == "y":
+                continue
+            source = "signal" if role == "x" else role
+            frame = frame.loc[starts[source].reindex(frame.index).eq(target_start.reindex(frame.index))]
     frame = frame.loc[h["start"]:h["end"]].replace([np.inf, -np.inf], np.nan).dropna()
     if len(frame) < 40:
         raise UserError(f"对齐并计算窗口后只有 {len(frame)} 个有效样本，至少需要 40 个；请扩大区间或缩短窗口")
@@ -393,6 +414,8 @@ def analyze(request):
         raise UserError("HAC 阶数需不小于观察窗口，且小于有效样本量的三分之一；请扩大区间或减少阶数")
     alpha = 1 - confidence
     warnings = list(dataset.get("warnings", []))
+    if h.get("timing") == "concurrent":
+        warnings.append("本次比较截至同一期的变化，描述同期联动，不代表预测能力或因果关系；同一日期不保证跨市场收盘时刻相同。变化类 X 仅保留窗口起止日期一致的样本。")
     warnings.append("仅检验本次确认的一个主假设；反复改阈值或模型后挑选显著结果，会夸大证据。")
     warnings.append("不同市场的收盘/发布时间不同；按日期和所选滞后对齐只能描述历史关联，不能证明因果或可交易性。")
     warnings.append("周/月频使用完整周期的最后一个有效观测；不填补缺失值，也不将未完成窗口计入样本。")

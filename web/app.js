@@ -48,11 +48,12 @@ function pick(source,symbol,label){return {source,symbol,label,field:'value'};}
 function defaultDraft(){
   const end=new Date();end.setUTCDate(end.getUTCDate()-1);
   const start=new Date(end);start.setUTCFullYear(start.getUTCFullYear()-4);
-  return {original:state.original,kind:'event',target:pick('tencent','sh000300','沪深300'),signal:pick('tencent','sh000300','沪深300'),controls:[],start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10),frequency:'daily',x_transform:'return',y_transform:'return',lookback:1,horizon:1,lag:0,operator:'le',threshold:-1,flat_band:0.1,direction:'positive'};
+  return {original:state.original,kind:'event',target:pick('tencent','sh000300','沪深300'),signal:pick('tencent','sh000300','沪深300'),controls:[],start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10),frequency:'daily',timing:'forward',x_transform:'return',y_transform:'return',lookback:1,horizon:1,lag:0,operator:'le',threshold:-1,flat_band:0.1,direction:'positive'};
 }
 function normalizeDraft(d){
   const base=defaultDraft();
   const result={...base,...d,target:{...base.target,...d.target},signal:{...base.signal,...d.signal},controls:d.controls || []};
+  if(result.timing==='concurrent'){result.lookback=result.horizon;result.lag=0;}
   result.controls=result.controls.slice(0,2).map(s=>({...s,field:s.field || 'value'}));
   return result;
 }
@@ -92,15 +93,18 @@ function seriesEditor(role,spec){
 }
 function draftView(){
   const h=state.draft || defaultDraft();
+  const concurrent=h.timing==='concurrent';
   return `${heading('DEFINE THE QUESTION','把每一个关键定义确认下来','选项是建议，你可以直接修改。最终以此表单为准；返回修改并再次确认会建立新的检验。')}
   ${state.questions.length?`<section class="card"><div class="card-top"><h2>还需要明确 ${state.questions.length} 个问题</h2><span class="pill">AI 澄清</span></div><p class="muted">${esc(state.message)}</p>${state.questions.map((q,i)=>`<div class="question"><h3>${i+1}. ${esc(q.text)}</h3><div class="options">${(q.options || []).map(opt=>`<button class="option ${state.answers[q.id]===opt?'selected':''}" data-action="answer" data-id="${esc(q.id)}" data-value="${esc(opt)}">${esc(opt)}</button>`).join('')}</div><input data-answer="${esc(q.id)}" value="${esc(state.answers[q.id] || '')}" placeholder="也可以输入自己的定义"></div>`).join('')}<div class="actions">${button('提交回答，更新假设','clarify-again')}</div></section>`:''}
   <section class="card"><div class="card-top"><h2>可检验的假设</h2><span class="micro">所有数值均可编辑</span></div><div id="draft-form">
-  <div class="form-grid"><label>问题类型${select('kind',h.kind,[['event','条件出现后，与其余样本比较'],['relation','两个变量的相关 / 回归关系']])}</label><label>预期方向${select('direction',h.direction,[['positive','正向关系 / 条件组更高'],['negative','负向关系 / 条件组更低'],['two_sided','双向差异，不预设方向']])}</label></div>
+  <div class="form-grid"><label>问题类型${select('kind',h.kind,[['event','条件成立时，与其余样本比较'],['relation','两个变量的相关 / 回归关系']])}</label><label>预期方向${select('direction',h.direction,[['positive','正向关系 / 条件组更高'],['negative','负向关系 / 条件组更低'],['two_sided','双向差异，不预设方向']])}</label></div>
   <div class="series-grid" style="margin-top:20px">${seriesEditor('target',h.target)}${seriesEditor('signal',h.signal)}</div>
   <div class="actions" style="margin-top:10px">${button('X 使用与 Y 相同的标的','same-series',true)}</div>
   <div class="form-grid three"><label>开始日期${input('start',h.start,'date')}</label><label>结束日期（最晚昨天）${input('end',h.end,'date')}</label><label>分析频率${select('frequency',h.frequency,[['daily','日频 · 各自的观测日'],['weekly','周频 · 完整周末值'],['monthly','月频 · 完整月末值']])}</label></div>
-  <div class="form-grid three"><label>X 使用什么数值${select('x_transform',h.x_transform,[['return','涨跌幅（%）'],['change','原单位变化'],['level','原数值水平']])}</label><label>X 回看多少期${input('lookback',h.lookback,'number','min="1" max="60"')}</label><label>X 额外滞后多少期${input('lag',h.lag,'number','min="0" max="20"')}</label></div>
-  <div class="form-grid three"><label>Y 观察什么结果${select('y_transform',h.y_transform,[['return','未来收益率（%）'],['change','未来原单位变化']])}</label><label>Y 未来多少期${input('horizon',h.horizon,'number','min="1" max="20"')}</label><label>频率口径<input value="周/月频取期末值；不填充缺失" disabled></label></div>
+  <label>时间关系${select('timing',h.timing || 'forward',[['forward','后续关系 · X 变化后，Y 随后怎样'],['concurrent','同期关系 · 同一天 / 同一周 / 同一月的联动']])}</label>
+  <p class="muted">${concurrent?'同期检验：日频、窗口 1 即比较两者同一天的涨跌幅。X 与 Y 使用同样长的窗口，均截至当期，不额外滞后。':'后续检验：X 截至当期，Y 从当期开始观察未来变化。额外滞后 0 也不等于同期。'}</p>
+  <div class="form-grid three"><label>X 使用什么数值${select('x_transform',h.x_transform,[['return','涨跌幅（%）'],['change','原单位变化'],['level','原数值水平']])}</label><label>X 回看多少期${input('lookback',h.lookback,'number',`min="1" max="60" ${concurrent?'disabled':''}`)}</label><label>X 额外滞后多少期${input('lag',h.lag,'number',`min="0" max="20" ${concurrent?'disabled':''}`)}</label></div>
+  <div class="form-grid three"><label>Y 观察什么结果${select('y_transform',h.y_transform,[['return',concurrent?'同期收益率（%）':'未来收益率（%）'],['change',concurrent?'同期原单位变化':'未来原单位变化']])}</label><label>${concurrent?'同期窗口（1 = 同一期）':'Y 未来多少期'}${input('horizon',h.horizon,'number','min="1" max="20"')}</label><label>频率口径<input value="周/月频取期末值；不填充缺失" disabled></label></div>
   <div class="comparison-definition"><h3>也看反面：上涨 / 平稳 / 下跌时，Y 分别怎样？</h3>${h.x_transform==='level'?'<p class="muted">原数值水平不能区分上涨和下跌。要做三种情形的对照，请将 X 改为涨跌幅或原单位变化。</p>':`<label>平稳区间半宽（${h.x_transform==='return'?'百分数，例如 0.1 代表 ±0.1%':'X 的原单位，例如利率 0.1 代表 ±0.1 个百分点'}）${input('flat_band',h.flat_band ?? 0,'number','min="0" step="any" required')}</label><p class="muted">X 超过正边界为上涨，低于负边界为下跌，中间含边界为平稳。0 表示仅零变化算平稳；默认值只是起点，请按标的和频率确认。</p>`}</div>
   ${h.kind==='event'?`<div class="form-grid"><label>触发条件：X${select('operator',h.operator,[['le','小于或等于'],['ge','大于或等于']])}</label><label>阈值（涨跌幅 -3 表示 -3%）${input('threshold',h.threshold,'number','step="any"')}</label></div><p class="muted">对照组为同区间、不满足条件的其余有效观测；比较的是平均结果。</p>`:`<details ${h.controls.length?'open':''}><summary>控制变量（可选，最多两个；加入后使用回归）</summary><div class="series-grid">${h.controls.map((s,i)=>seriesEditor(`control${i+1}`,s)).join('')}</div><div class="actions">${h.controls.length<2?button('＋ 添加控制变量','add-control',true):''}${h.controls.length?button('移除最后一个','remove-control',true):''}</div><p class="muted">控制变量使用与 X 相同的变换、回看窗口和滞后期。</p></details>`}
   </div><div class="summary-box">${esc(draftSummary(h))}</div><p class="muted">请核对：黄金期货、黄金 ETF 与现货金价不同；利率的“变化”单位为百分点。跨市场结果只解释历史关联。“条件组更低”表示相对较弱，不一定是实际下跌。</p>
@@ -111,13 +115,15 @@ function draftSummary(h){
   const f={daily:'观测日',weekly:'周',monthly:'月'}[h.frequency];
   const x={return:'涨跌幅(%)',change:'原单位变化',level:'数值水平'}[h.x_transform];
   const y=h.y_transform==='return'?'收益率(%)':'原单位变化';
-  return `${h.start} 至 ${h.end}，使用 ${h.signal.label || h.signal.symbol} 的 ${h.lookback} ${f}${x}，额外滞后 ${h.lag} ${f}，检验 ${h.target.label || h.target.symbol} 随后 ${h.horizon} ${f}${y}。${h.kind==='event'?`条件：X ${h.operator==='le'?'≤':'≥'} ${h.threshold}；与不满足条件的样本比较。`:'检验变量之间的关系。'}${h.x_transform==='level'?'':`补充对照：上涨 X > ${h.flat_band ?? 0}，下跌 X < ${-(h.flat_band ?? 0)}，其余平稳（单位与 X 相同）。`}`;
+  const when=h.timing==='concurrent'?`同期检验，检验 ${h.target.label || h.target.symbol} 截至同一期的 ${h.horizon} ${f}${y}`:`额外滞后 ${h.lag} ${f}，检验 ${h.target.label || h.target.symbol} 随后 ${h.horizon} ${f}${y}`;
+  return `${h.start} 至 ${h.end}，使用 ${h.signal.label || h.signal.symbol} 的 ${h.lookback} ${f}${x}，${when}。${h.kind==='event'?`条件：X ${h.operator==='le'?'≤':'≥'} ${h.threshold}；与不满足条件的样本比较。`:'检验变量之间的关系。'}${h.x_transform==='level'?'':`补充对照：上涨 X > ${h.flat_band ?? 0}，下跌 X < ${-(h.flat_band ?? 0)}，其余平稳（单位与 X 相同）。`}`;
 }
 function readDraft(){
   const form=$('#draft-form');if(!form)return state.draft;
   const h={...state.draft};const value=name=>form.querySelector(`[name="${name}"]`)?.value;
-  for(const key of ['kind','direction','start','end','frequency','x_transform','y_transform','operator'])if(value(key)!==undefined)h[key]=value(key);
+  for(const key of ['kind','direction','start','end','frequency','timing','x_transform','y_transform','operator'])if(value(key)!==undefined)h[key]=value(key);
   for(const key of ['lookback','horizon','lag','threshold','flat_band'])if(value(key)!==undefined)h[key]=Number(value(key));
+  if(h.timing==='concurrent'){h.lookback=h.horizon;h.lag=0;form.querySelector('[name="lookback"]').value=h.lookback;form.querySelector('[name="lag"]').value=0;}
   function readSpec(role){return Object.fromEntries(['source','symbol','label','field'].map(k=>[k,value(`${role}_${k}`)?.trim() || '']));}
   h.target=readSpec('target');h.signal=readSpec('signal');h.controls=(h.controls || []).map((_,i)=>readSpec(`control${i+1}`));
   if(h.kind==='event')h.controls=[];
@@ -173,7 +179,7 @@ function resultView(){
   ${comparisonView(d)}
   ${termHelp()}
   <div class="chart-grid"><section class="card chart-card full-width"><h3>原始序列走势 · 各自独立刻度</h3>${d.series.map(s=>`<div class="muted">${esc(s.label)}</div>${lineChart(s.points,esc(s.label),s.role==='target'?'#307657':'#ab9a55')}`).join('')}<p class="muted">最多显示每条序列 500 个点；统计计算使用全部有效样本。</p></section>
-  <section class="card chart-card"><h3>X 与 Y 的样本关系</h3>${scatterChart(d.points)}<p class="muted">横轴 X：${esc({return:'涨跌幅（%）',change:'原单位变化',level:'原数值水平'}[r.hypothesis.x_transform])}；纵轴 Y：${esc(r.hypothesis.y_transform==='return'?'未来收益率（%）':'未来原单位变化')}。图中最多显示 700 个点。</p></section>
+  <section class="card chart-card"><h3>X 与 Y 的样本关系</h3>${scatterChart(d.points)}<p class="muted">横轴 X：${esc({return:'涨跌幅（%）',change:'原单位变化',level:'原数值水平'}[r.hypothesis.x_transform])}；纵轴 Y：${esc(r.hypothesis.y_transform==='return'?(r.hypothesis.timing==='concurrent'?'同期收益率（%）':'未来收益率（%）'):(r.hypothesis.timing==='concurrent'?'同期原单位变化':'未来原单位变化'))}。图中最多显示 700 个点。</p></section>
   <section class="card chart-card"><h3>结果变量 Y 的分布</h3>${histogramChart(d.histogram)}<p class="muted">横轴为结果数值，纵轴为样本数。</p></section></div>
   <section class="card"><div class="card-top"><h2>AI 辅助解读</h2>${button(r.narrative?'重新解读':'让 AI 解读结果','interpret',true)}</div><p class="muted">AI 选择本次值得解释的术语；新版解读的事实与判断直接对应上方计算结果。</p>${r.narrative && r.narrative_version!==2?'<div class="warning">此解读来自旧版或上次未成功完成，请点击重新解读，以计算表格为准。</div>':''}<div class="narrative">${esc(r.narrative || '计算结果已就绪。可让所选模型选择解释重点，帮助理解效应大小、证据和局限。')}</div></section>
   <section class="card"><h2>口径与局限</h2><p class="muted">${esc(d.model_detail)}</p><div class="summary-box">${esc(r.summary)}</div>${warnings(d.warnings)}<details><summary>查看有效样本（前 20 行）</summary>${dataTable(d.rows.slice(0,20),Object.keys(d.rows[0]))}</details><div class="actions">${button('调整模型重新检验','to-model',true)}${button('导出有效样本 CSV','download-analysis',true)}${button('新建一个假设','new')}</div></section>`;
@@ -381,7 +387,7 @@ document.addEventListener('change',async event=>{
     const role=el.name.replace('_preset','');const preset=state.catalog[Number(el.value)];
     if(preset){const spec={source:preset.source,symbol:preset.symbol,label:preset.label,field:'value'};if(role.startsWith('control'))state.draft.controls[Number(role.slice(-1))-1]=spec;else state.draft[role]=spec;}
     render();
-  }else if(el.name==='kind')render();
+  }else if(el.name==='kind'||el.name==='timing')render();
   else if(el.name==='x_transform'){state.draft.flat_band=0;render();notice('X 的单位已变更，平稳半宽已重置为 0；请按新单位确认。');}
   else {const summary=$('.summary-box');if(summary)summary.textContent=draftSummary(state.draft);}
 });
