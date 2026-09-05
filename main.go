@@ -177,7 +177,8 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		switch path {
 		case "bootstrap":
-			respond(w, map[string]any{"settings": a.config().Public(), "providers": modelProviders, "catalog": catalog, "history": a.history(), "glossary": statisticsTerms})
+			s := a.config()
+			respond(w, map[string]any{"settings": s.Public(), "providers": modelProviders, "models": modelCatalog(s), "catalog": catalog, "history": a.history(), "glossary": statisticsTerms})
 			return
 		case "history":
 			respond(w, a.history())
@@ -213,6 +214,8 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch path {
+	case "models":
+		a.listCustomModels(w, r)
 	case "settings":
 		var input struct {
 			Settings
@@ -224,7 +227,11 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		input.Model = strings.TrimSpace(input.Model)
 		_, validProvider := providerByID(input.Provider)
 		if !validProvider || (input.Model == "" && input.Provider != "codex") || len(input.Model) > 100 {
-			fail(w, errors.New("请选择服务并填写模型名"))
+			fail(w, errors.New("请选择服务和模型"))
+			return
+		}
+		if err := validateEffort(input.Settings); err != nil {
+			fail(w, err)
 			return
 		}
 		a.mu.Lock()
@@ -253,6 +260,7 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Provider = input.Provider
 		s.Model = strings.TrimSpace(input.Model)
+		s.ReasoningEffort = effectiveEffort(input.Settings)
 		s.Remember = input.Remember
 		var err error
 		if s.Remember {

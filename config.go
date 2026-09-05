@@ -9,6 +9,7 @@ import (
 type Settings struct {
 	Provider           string `json:"provider"`
 	Model              string `json:"model"`
+	ReasoningEffort    string `json:"reasoning_effort"`
 	DeepseekKey        string `json:"deepseek_key"`
 	OpenAIKey          string `json:"openai_key"`
 	GLMKey             string `json:"glm_key"`
@@ -32,7 +33,7 @@ func (s *Settings) keyFields() map[string]*string {
 	return map[string]*string{"deepseek": &s.DeepseekKey, "openai": &s.OpenAIKey, "glm": &s.GLMKey, "kimi": &s.KimiKey, "claude": &s.ClaudeKey, "grok": &s.GrokKey, "compatible": &s.CompatibleKey, "fred": &s.FredKey}
 }
 func (s Settings) Public() map[string]any {
-	out := map[string]any{"provider": s.Provider, "model": s.Model, "remember": s.Remember, "compatible_base_url": s.CompatibleBaseURL, "compatible_json_mode": s.CompatibleJSONMode}
+	out := map[string]any{"provider": s.Provider, "model": s.Model, "reasoning_effort": effectiveEffort(s), "remember": s.Remember, "compatible_base_url": s.CompatibleBaseURL, "compatible_json_mode": s.CompatibleJSONMode}
 	for id, key := range s.keyFields() {
 		out[id+"_configured"] = *key != ""
 	}

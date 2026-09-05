@@ -16,6 +16,9 @@ import (
 var llmHTTP = &http.Client{Timeout: 110 * time.Second}
 
 func callLLM(ctx context.Context, s Settings, system string, input any, output any) error {
+	if err := validateEffort(s); err != nil {
+		return err
+	}
 	if s.Provider == "codex" {
 		return callCodex(ctx, s, system, input, output)
 	}
@@ -60,13 +63,14 @@ func callLLM(ctx context.Context, s Settings, system string, input any, output a
 		}
 		req.Header.Set("Content-Type", "application/json")
 		client := *llmHTTP
+		client.Timeout = modelTimeout(s)
 		// In particular, x-api-key must never be forwarded to a redirect host.
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		resp, err := client.Do(req)
 		if err != nil {
 			return errors.New("模型请求失败或超时，请检查网络后重试；已填内容会保留")
 		}
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 512*1024+1))
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024+1))
 		_ = resp.Body.Close()
 		if resp.StatusCode != 200 {
 			if resp.StatusCode == 401 || resp.StatusCode == 403 {
@@ -86,7 +90,7 @@ func callLLM(ctx context.Context, s Settings, system string, input any, output a
 		if readErr != nil {
 			return errors.New("读取模型响应失败，请重试")
 		}
-		if len(data) > 512*1024 {
+		if len(data) > 4*1024*1024 {
 			return errors.New("模型响应过长，请缩短假设后重试")
 		}
 		text, complete := llmResponseText(s.Provider, data)
@@ -104,7 +108,7 @@ func callLLM(ctx context.Context, s Settings, system string, input any, output a
 			return nil
 		}
 	}
-	return errors.New("模型没有返回完整的结构化结果。请重试，或直接编辑假设表单")
+	return errors.New("模型没有返回完整的结构化结果，可能已用完本次输出预算。可降低推理强度重试，或直接编辑假设表单")
 }
 
 func llmPayload(s Settings, system, user string, output any) (map[string]any, error) {
@@ -113,27 +117,26 @@ func llmPayload(s Settings, system, user string, output any) (map[string]any, er
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"model": s.Model, "max_tokens": 5000, "system": system,
+		payload := map[string]any{
+			"model": s.Model, "max_tokens": reasoningTokens(s), "system": system,
 			"messages":      []map[string]string{{"role": "user", "content": user}},
 			"output_config": map[string]any{"format": map[string]any{"type": "json_schema", "schema": schema}},
-		}, nil
+		}
+		return payload, applyReasoning(payload, s)
 	}
-	payload := map[string]any{"model": s.Model, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}, "max_tokens": 5000}
+	payload := map[string]any{"model": s.Model, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": user}}, "max_tokens": reasoningTokens(s)}
 	if s.Provider != "compatible" || s.CompatibleJSONMode {
 		payload["response_format"] = map[string]string{"type": "json_object"}
 	}
-	if s.Provider == "openai" {
+	style := findLLMModel(s.Provider, s.Model).style
+	if s.Provider == "openai" || style == "openai" || style == "kimi-effort" {
 		delete(payload, "max_tokens")
-		payload["max_completion_tokens"] = 5000
+		payload["max_completion_tokens"] = reasoningTokens(s)
 	}
-	if s.Provider == "deepseek" || (s.Provider == "glm" && !strings.HasPrefix(s.Model, "glm-4-flash")) || (s.Provider == "kimi" && oneOf(s.Model, "kimi-k2.5", "kimi-k2.6")) {
-		payload["thinking"] = map[string]string{"type": "disabled"}
+	if style == "always" {
+		payload["thinking"] = map[string]string{"type": "enabled", "keep": "all"}
 	}
-	if s.Provider == "grok" {
-		payload["max_tokens"] = 8192
-	}
-	return payload, nil
+	return payload, applyReasoning(payload, s)
 }
 
 func llmResponseText(provider string, data []byte) (string, bool) {

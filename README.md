@@ -16,7 +16,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 已经启动时会打开现有页面。正常启动后可在窗口按 Ctrl+C 停止；后台运行的实例可用 `powershell -ExecutionPolicy Bypass -File .\stop.ps1` 停止。
 
-打开 **http://127.0.0.1:8765**，在“模型与数据源设置”选择模型服务，填写它的 API Key 和模型名，再点击“保存并测试模型”。也可以选 Codex 复用本机 ChatGPT 登录；需要 FRED 数据时仍填写 FRED Key。默认仅在本次进程内保存；勾选“记住”才会明文保存到本机 `.local/settings.json`。
+打开 **http://127.0.0.1:8765**，在“模型与数据源设置”选择服务，点击模型和推理强度选项卡，填写对应 API Key，再点击“保存并测试模型”。模型名称与强度无需手填。也可以选 Codex 复用本机 ChatGPT 登录；需要 FRED 数据时仍填写 FRED Key。默认仅在本次进程内保存；勾选“记住”才会明文保存到本机 `.local/settings.json`。
 
 界面无需修改配置文件。可以先点击“用合成数据体验完整计算”，检查数据、确认模型后生成结果。演示数据始终明确标注，不能用于真实市场判断。
 
@@ -24,7 +24,7 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 
 ## 模型 API 选择
 
-| 设置中的服务 | 默认模型示例（可修改） | Key 环境变量 | 接口 |
+| 设置中的服务 | 初始模型（可在选项卡切换） | Key 环境变量 | 接口 |
 |---|---|---|---|
 | DeepSeek | `deepseek-v4-flash` | `DEEPSEEK_API_KEY` | DeepSeek Chat Completions |
 | OpenAI GPT | `gpt-4.1-mini` | `OPENAI_API_KEY` | OpenAI Chat Completions |
@@ -32,28 +32,51 @@ powershell -ExecutionPolicy Bypass -File .\start.ps1
 | Kimi（月之暗面） | `kimi-k2.6` | `MOONSHOT_API_KEY`（也支持 `KIMI_API_KEY`） | [Moonshot 国内 API](https://platform.kimi.com/docs/api/chat) |
 | Claude（Anthropic） | `claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY`（也支持 `CLAUDE_API_KEY`） | [Messages API](https://platform.claude.com/docs/en/api/overview) + [结构化输出](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) |
 | Grok（xAI） | `grok-4.6` | `XAI_API_KEY`（也支持 `GROK_API_KEY`） | [xAI Chat Completions](https://docs.x.ai/developers/model-capabilities/legacy/chat-completions) |
-| 自定义 OpenAI 兼容接口 | 按服务商文档填写 | `COMPATIBLE_API_KEY` | 自填 Base URL，支持 Chat Completions 协议 |
-| Codex（ChatGPT 登录） | 留空使用 CLI 默认值 | 无需模型 API Key | 见下节 |
+| 自定义 OpenAI 兼容接口 | 从接口读取列表后选择 | `COMPATIBLE_API_KEY` | 自填 Base URL，支持 Chat Completions 协议 |
+| Codex（ChatGPT 登录） | 自动选择（CLI 默认值） | 无需模型 API Key | 见下节 |
 
-界面只显示当前模型服务的 Key 输入框，切换不会丢掉其他服务的已保存 Key。勾选“清除已保存的全部 Key”会清除所有模型和 FRED Key。上表模型只是预填示例，实际权限、余额和模型 ID 以各自开放平台为准；这些 API 选择不会使用 ChatGPT Plus 的 Codex 额度。Claude 请使用支持结构化输出的模型，默认 Haiku 4.5 已在官方支持列表中。
+界面只显示当前模型服务的 Key 输入框，切换不会丢掉其他服务的已保存 Key。勾选“清除已保存的全部 Key”会清除所有模型和 FRED Key。预置模型不代表账号已获得权限，实际可用性以“保存并测试模型”为准。通过 API Key 调用按服务商规则计费；通过 Codex 登录调用使用 ChatGPT 账号的 Codex 额度。Claude 预置模型均按官方结构化输出协议接入。
 
-其他服务可选择“自定义 OpenAI 兼容接口”，填写服务商的 Base URL（例如 `https://服务商域名/v1`）、模型 ID、该服务的 Key；支持填写完整 `/chat/completions` 地址，程序不会重复拼接。若服务不支持 `response_format`，保持“JSON 模式”不勾选即可。远程地址使用 HTTPS，本机 `http://localhost:端口/v1` 也支持；URL 中不要放 Key。更换自定义地址后必须重新填对应 Key，避免把旧 Key 发到另一个服务。
+其他服务可选择“自定义 OpenAI 兼容接口”，填写服务商的 Base URL（例如 `https://服务商域名/v1`）和 Key，点击“读取模型列表”后直接选模型。接口需支持 `GET /models`；已保存的旧模型仍可选择。支持填写完整 `/chat/completions` 地址，程序不会重复拼接。已识别模型沿用对应厂商的推理参数；未知模型只显示“模型默认”，不猜测接口能力。若服务不支持 `response_format`，保持“JSON 模式”不勾选即可。远程地址使用 HTTPS，本机 `http://localhost:端口/v1` 也支持；URL 中不要放 Key。更换自定义地址后必须重新填对应 Key，避免把旧 Key 发到另一个服务。
 
 GLM 默认连接 `open.bigmodel.cn`，Kimi 默认连接 `api.moonshot.cn`；不同平台、地区的 Key 不保证通用，其他地址应配合“自定义接口”使用。`COMPATIBLE_BASE_URL` 可作为自定义地址的环境变量。接口返回格式不符或输出被截断时最多重试一次，鉴权、限流等错误会明确显示，已完成的统计结果保留。
 
 新增服务已覆盖请求格式、Key 隔离、Claude 内容解析、截断响应、重试和失败路径的模拟测试；没有对应有效 Key 的服务不声称已通过真实账号调用。可以填入自己的 Key 后，用“保存并测试模型”确认账号实际可用性。
 
-## 使用 ChatGPT Plus 的 Codex 额度
+## 模型与推理强度
+
+模型与强度是两组独立选项卡。切换模型后只显示它支持的档位；“模型默认”表示不覆盖服务的推理参数。选择 **Codex → GPT-6 Astra → 极高** 即会传入模型 `gpt-6-astra` 和强度 `xhigh`，无需拼接模型名称。
+
+| 服务 / 模型 | 可选推理设置 | 实际参数 |
+|---|---|---|
+| OpenAI GPT-6 Astra、Codex 中的 Astra | 低、中、高、极高、最高 | API `reasoning_effort` / CLI `model_reasoning_effort` |
+| OpenAI GPT-5.6 Luna | 关闭、低、中、高、极高、最高 | `reasoning_effort` |
+| GPT-4.1 mini | 模型默认 | 不支持推理调节 |
+| DeepSeek V4 Flash / Pro | 关闭、低、高、最高 | `thinking.type` + `reasoning_effort` |
+| GLM-5.2 | 关闭、高、最高 | `thinking.type` + `reasoning_effort`；不重复展示服务会合并的同义档位 |
+| GLM-5.1 / 4.7 / 4.7 Flash、Kimi K2.6 | 关闭、开启 | `thinking.type` |
+| Kimi K3 | 低、高、最高 | `reasoning_effort`；始终推理 |
+| Kimi K2.7 Code | 模型默认 | 始终思考，无可调档位 |
+| Claude Sonnet 5 / Opus 5 | 低、中、高、极高、最高 | 自适应思考 + `output_config.effort` |
+| Claude Sonnet 4.6 / Opus 4.6 | 低、中、高、最高 | 自适应思考 + `output_config.effort` |
+| Claude Haiku 4.5 | 关闭、低、中、高 | 思考预算分别为 1,024 / 4,096 / 8,192 tokens，非原生 effort 等级 |
+| Grok 4.6 / 4.5 | 低、中、高；4.6 另有极高 | `reasoning_effort`；始终推理 |
+
+档位来自各家公开协议：[OpenAI Astra](https://developers.openai.com/api/docs/models/gpt-6-astra)、[DeepSeek](https://api-docs.deepseek.com/guides/thinking_mode/)、[智谱](https://docs.bigmodel.cn/cn/guide/capabilities/thinking)、[Kimi](https://platform.kimi.com/docs/api/chat)、[Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort) / [思考预算](https://platform.claude.com/docs/en/build-with-claude/extended-thinking)、[Grok](https://docs.x.ai/developers/model-capabilities/text/reasoning)。模型名单为预置目录，并非账号权限列表。
+
+更高强度通常更慢、消耗更多额度，不等于统计结论更可靠或更显著。程序会给推理留出更大的输出预算，推理请求最多等待约 10 分钟；输出被截断仍可能失败，可降档重试。所有统计检验依旧由内置工具完成。
+
+## 使用 ChatGPT 订阅中的 Codex 额度
 
 1. 安装官方 [Codex](https://developers.openai.com/codex/quickstart)，用 ChatGPT 账号登录。已在本机 Codex 登录过的用户可直接下一步；也可在终端运行 `codex login`。
 2. 打开 MarketCheck 的“模型与数据源设置”，选择 **Codex（ChatGPT 登录）**。程序会检测登录，显示“已检测到 ChatGPT 登录”。无需 OpenAI API Key。
-3. 模型名称先留空，使用 Codex CLI 的默认模型；也可以填自己账号可用的 Codex 模型 ID。点击 **保存并测试模型**，成功后即可正常澄清假设、推荐方法和生成辅助解读。
+3. 点击“自动选择（Codex 默认）”，或者选择具体模型与推理强度，例如 **GPT-6 Astra → 极高**。点击 **保存并测试模型**，成功后即可正常澄清假设、推荐方法和生成辅助解读。
 
-这会使用 ChatGPT 账号的 Codex 额度，与 Codex 中的其他任务共享；Plus 并不提供无限调用，也不会把套餐变为 OpenAI API 余额。额度不足或登录失效会显示错误，可以等恢复或手动切换 DeepSeek，程序不会自动走付费 API。具体额度和恢复时间在 Codex 中查看。说明依据：[Codex 认证](https://developers.openai.com/codex/auth)、[套餐与额度](https://developers.openai.com/codex/pricing)。
+这会使用 ChatGPT 账号的 Codex 额度，与 Codex 中的其他任务共享。是否包含 Codex、可用模型与使用限额取决于账号当前订阅及服务规则；订阅额度不等同于 OpenAI API 余额。额度不足或登录失效会显示错误，可以等恢复或手动切换 DeepSeek，程序不会自动走付费 API。具体额度和恢复时间在 Codex 中查看。说明依据：[Codex 认证](https://developers.openai.com/codex/auth)、[套餐与额度](https://developers.openai.com/codex/pricing)。
 
 本功能调用官方 `codex exec`（已验证 CLI **0.153.4**），不读取、复制或保存 ChatGPT 登录令牌。登录由 Codex 自己管理，不受 MarketCheck“记住 Key / 清除 Key”影响。每次使用独立临时工作目录、只读沙箱、严格 JSON 输出，并关闭 shell、浏览器、插件、连接器和用户 hooks；不加载个人 Codex 配置或项目指令。数据源 Key 不传给该子进程，取数与统计仍由固定程序执行。参考：[官方非交互调用](https://developers.openai.com/codex/noninteractive)。
 
-找不到 CLI 时，先重启 MarketCheck；Windows 会自动查找 PATH、Codex 桌面安装目录和常见 npm 安装目录。特殊安装可在启动前设置 `$env:MARKETCHECK_CODEX='C:\实际路径\codex.exe'`。旧版本不支持所需参数时请更新 Codex。单次调用最多等待约 3 分钟，失败时已填假设与已完成结果保留。
+找不到 CLI 时，先重启 MarketCheck；Windows 会自动查找 PATH、Codex 桌面安装目录和常见 npm 安装目录。特殊安装可在启动前设置 `$env:MARKETCHECK_CODEX='C:\实际路径\codex.exe'`。旧版本不支持所需参数时请更新 Codex。单次 Codex 调用最多等待约 10 分钟，失败时已填假设与已完成结果保留。
 
 ## 支持的数据
 

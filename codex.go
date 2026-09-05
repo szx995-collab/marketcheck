@@ -125,12 +125,12 @@ func executeCodex(ctx context.Context, path, dir string, args []string, input st
 	return out.Bytes(), stderr.Bytes(), err
 }
 
-func codexArgs(model, instructions, schema string) []string {
+func codexArgs(model, effort, instructions, schema string) []string {
 	args := []string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json", "--output-schema", schema}
 	for _, setting := range []string{
 		`forced_login_method="chatgpt"`, `model_provider="openai"`, `approval_policy="never"`,
 		`web_search="disabled"`, `project_doc_max_bytes=0`, `history.persistence="none"`,
-		`model_reasoning_effort="low"`, `model_instructions_file=` + tomlString(instructions),
+		`model_instructions_file=` + tomlString(instructions),
 		`features.shell_tool=false`, `features.unified_exec=false`, `features.shell_snapshot=false`,
 		`features.apps=false`, `features.plugins=false`, `features.hooks=false`,
 		`features.browser_use=false`, `features.computer_use=false`, `features.view_image=false`,
@@ -141,6 +141,9 @@ func codexArgs(model, instructions, schema string) []string {
 	}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if effort != "" && effort != "auto" {
+		args = append(args, "-c", "model_reasoning_effort="+tomlString(effort))
 	}
 	return append(args, "-")
 }
@@ -186,6 +189,10 @@ func codexSchema(t reflect.Type) (map[string]any, error) {
 }
 
 func callCodex(ctx context.Context, s Settings, system string, input, output any) error {
+	s.Provider = "codex"
+	if err := validateEffort(s); err != nil {
+		return err
+	}
 	status := readCodexStatus(ctx)
 	if !status.LoggedIn {
 		return errors.New(status.Message)
@@ -194,7 +201,7 @@ func callCodex(ctx context.Context, s Settings, system string, input, output any
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 180*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	// An empty temporary workspace keeps project files, keys and AGENTS.md out
 	// of the task. Analysis and downloads remain in our fixed local program.
@@ -218,7 +225,7 @@ func callCodex(ctx context.Context, s Settings, system string, input, output any
 	if err != nil {
 		return err
 	}
-	out, stderr, err := runCodex(ctx, path, dir, codexArgs(s.Model, instructions, schemaPath), string(user))
+	out, stderr, err := runCodex(ctx, path, dir, codexArgs(s.Model, effectiveEffort(s), instructions, schemaPath), string(user))
 	if ctx.Err() != nil {
 		return errors.New("Codex 请求超时或已取消；已填内容保留，可以重试")
 	}

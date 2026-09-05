@@ -26,16 +26,21 @@
   <dialog id="settings-dialog">
     <form id="settings-form"><div class="dialog-heading"><div><span class="eyebrow">CONNECTIONS</span><h2>模型与数据源</h2></div><button type="button" class="icon-button" data-action="close-settings" aria-label="关闭">×</button></div>
       <p class="muted">Key 由本机后端使用；FRED Key 不会发送给大模型。留空会保留已有 Key。</p>
-      <div class="form-grid"><label>模型服务<select name="provider"></select></label><label>模型名称<input name="model" required placeholder="填写账号可用的模型 ID"></label></div>
+      <label>模型服务<select name="provider"></select></label>
       <p id="provider-hint" class="muted"></p>
       <div id="compatible-options" hidden>
         <label>Base URL<input name="compatible_base_url" type="url" autocomplete="off" placeholder="https://服务商地址/v1"></label>
         <p class="muted">填写服务商文档中的 Base URL（包含 /v1 等前缀），也可填写完整 /chat/completions 地址。更换地址后需重新填写对应 Key。</p>
         <label class="check-row"><input name="compatible_json_mode" type="checkbox">启用 JSON 模式（仅当服务支持 response_format 时勾选）</label>
+        <button type="button" class="button secondary" data-action="load-models">读取模型列表</button>
       </div>
+      <fieldset class="choice-field"><legend>选择模型</legend><div id="llm-model-options" class="choice-tabs"></div></fieldset>
+      <fieldset class="choice-field"><legend>推理强度</legend><div id="effort-options" class="choice-tabs"></div></fieldset>
+      <p id="effort-hint" class="muted"></p>
+      <p class="muted">更高强度通常需要更多时间和额度，不代表统计结论更显著。模型负责理解假设；统计计算仍由内置工具完成。</p>
       <div id="codex-help" class="summary-box" hidden>
         <strong>使用 ChatGPT 套餐中的 Codex 额度</strong>
-        <p>无需 OpenAI API Key。复用本机 Codex 的 ChatGPT 登录，与其他 Codex 使用共享额度，受账号限额限制。模型名可留空使用 Codex 默认值。</p>
+        <p>无需 OpenAI API Key。复用本机 Codex 的 ChatGPT 登录，与其他 Codex 使用共享额度，受账号限额限制。选择“自动选择”可使用 Codex 默认模型。</p>
         <p id="codex-status" role="status">尚未检测本机登录。</p>
         <button type="button" class="button secondary" data-action="codex-status">重新检测登录</button>
         <details><summary>首次使用或登录失效</summary><p>先安装并打开官方 Codex，用 ChatGPT 账号登录；也可以在终端运行 <code>codex login</code>。完成后点击“重新检测登录”，再“保存并测试模型”。安装后仍未找到时，请重启 MarketCheck。</p><p>这里只复用登录状态，不会保存 ChatGPT 密码或登录令牌，也不会在额度不足时自动切换到付费 API。</p></details>

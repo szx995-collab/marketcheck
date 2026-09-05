@@ -39,7 +39,11 @@ async function work(message, fn) {
   catch(error) { notice(error.message,'error'); }
   finally {state.busy=false;syncBusy();}
 }
-function syncBusy(){document.querySelectorAll('button').forEach(b=>{if(b.dataset.action!=='close-settings')b.disabled=state.busy;});}
+function syncBusy(){
+  document.querySelectorAll('button').forEach(b=>{if(b.dataset.action!=='close-settings')b.disabled=state.busy;});
+  document.querySelectorAll('#settings-form .choice-field, #settings-form select').forEach(el=>el.disabled=state.busy);
+  document.querySelectorAll('#settings-form input').forEach(el=>el.readOnly=state.busy);
+}
 function pick(source,symbol,label){return {source,symbol,label,field:'value'};}
 function defaultDraft(){
   const end=new Date();end.setUTCDate(end.getUTCDate()-1);
@@ -207,16 +211,20 @@ async function clarify(){
 function providerInfo(id){return state.providers?.find(p=>p.id===id);}
 function settingsKeyIDs(){return [...state.providers.filter(p=>p.id!=='codex').map(p=>p.id),'fred'];}
 function initializeSettings(){
+  state.savedCustomModels=[...(state.models.compatible || [])];
   $('#settings-form').elements.provider.innerHTML=state.providers.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
   $('#model-key-fields').innerHTML=state.providers.filter(p=>p.id!=='codex').map(p=>`<label data-key-provider="${esc(p.id)}">${esc(p.label)} API Key <span id="${esc(p.id)}-state" class="key-state"></span><input name="${esc(p.id)}_key" type="password" autocomplete="off" placeholder="输入所选服务的 API Key；留空保留已有 Key"></label>`).join('');
 }
 function renderKeyStates(){for(const key of settingsKeyIDs())$(`#${key}-state`).textContent=state.settings[`${key}_configured`]?'已配置':'未配置';}
 async function openSettings(){
   const f=$('#settings-form');f.reset();
-  f.elements.provider.value=state.settings.provider || 'deepseek';f.elements.model.value=state.settings.model ?? '';f.elements.remember.checked=!!state.settings.remember;
+  state.models.compatible=[...state.savedCustomModels];
+  f.elements.provider.value=state.settings.provider || 'deepseek';f.elements.remember.checked=!!state.settings.remember;
   f.elements.compatible_base_url.value=state.settings.compatible_base_url || '';
   f.elements.compatible_json_mode.checked=!!state.settings.compatible_json_mode;
-  state.editProvider=f.elements.provider.value;state.editModels={[state.editProvider]:f.elements.model.value};
+  state.editProvider=f.elements.provider.value;
+  state.editModels={[state.editProvider]:state.settings.model ?? ''};
+  state.editEfforts={[`${state.editProvider}:${state.settings.model ?? ''}`]:state.settings.reasoning_effort || 'auto'};
   renderKeyStates();
   $('#settings-status').textContent='';updateProviderFields();$('#settings-dialog').showModal();
   if(f.elements.provider.value==='codex')await refreshCodexStatus();
@@ -224,13 +232,37 @@ async function openSettings(){
 function updateProviderFields(){
   const f=$('#settings-form'),id=f.elements.provider.value,codex=id==='codex',compatible=id==='compatible',provider=providerInfo(id);
   $('#codex-help').hidden=!codex;
-  f.elements.model.required=!codex;
-  f.elements.model.placeholder=codex?'留空使用 Codex 默认模型':provider?.default_model || '填写服务商提供的模型 ID';
   $('#provider-hint').textContent=provider?.hint || '';
   $('#compatible-options').hidden=!compatible;
   f.elements.compatible_base_url.required=compatible;f.elements.compatible_base_url.disabled=!compatible;
   f.elements.compatible_json_mode.disabled=!compatible;
   document.querySelectorAll('[data-key-provider]').forEach(label=>{label.hidden=label.dataset.keyProvider!==id;});
+  renderModelOptions();
+}
+const choiceTabs=(name, selected, options)=>options.map(o=>`<label class="choice-tab"><input type="radio" name="${name}" value="${esc(o.value)}" ${o.value===selected?'checked':''}><span>${esc(o.label)}</span></label>`).join('');
+function renderModelOptions(){
+  const id=state.editProvider,models=state.models[id] || [];
+  let selected=state.editModels[id] ?? providerInfo(id)?.default_model;
+  if(!models.some(m=>m.id===selected))selected=models[0]?.id;
+  state.editModels[id]=selected;
+  $('#llm-model-options').innerHTML=models.length?choiceTabs('model',selected,models.map(m=>({value:m.id,label:m.label}))):'<p class="muted">填写接口地址与 Key，点击“读取模型列表”后选择。</p>';
+  renderEffortOptions();
+}
+function renderEffortOptions(){
+  const id=state.editProvider,model=state.editModels[id],spec=state.models[id]?.find(m=>m.id===model),key=`${id}:${model}`;
+  let selected=state.editEfforts[key] ?? spec?.default_effort;
+  if(spec && !spec.efforts.some(e=>e.value===selected))selected=spec.default_effort;
+  state.editEfforts[key]=selected;
+  $('#effort-options').innerHTML=spec?choiceTabs('reasoning_effort',selected,spec.efforts):'';
+  $('#effort-hint').textContent=spec?.hint || '先选择模型，即可查看它支持的推理档位。';
+}
+async function loadModelOptions(){
+  const f=$('#settings-form');
+  $('#settings-status').textContent='正在读取接口提供的模型列表…';
+  try{
+    state.models.compatible=await api('models',{base_url:f.elements.compatible_base_url.value,key:f.elements.compatible_key.value,clear_keys:f.elements.clear_keys.checked});
+    renderModelOptions();syncBusy();$('#settings-status').textContent=`已读取 ${state.models.compatible.length} 个模型，请选择后保存。未知模型使用服务默认推理设置。`;
+  }catch(error){$('#settings-status').textContent=error.message;throw error;}
 }
 async function refreshCodexStatus(){
   $('#codex-status').textContent='正在检测本机 Codex 登录…';
@@ -241,12 +273,15 @@ async function refreshCodexStatus(){
 async function saveSettings(test=false){
   const f=$('#settings-form');if(!f.reportValidity())return;
   const body=Object.fromEntries(new FormData(f));body.remember=f.elements.remember.checked;body.clear_keys=f.elements.clear_keys.checked;body.compatible_json_mode=f.elements.compatible_json_mode.checked;
+  body.provider=state.editProvider;body.model=state.editModels[body.provider];body.reasoning_effort=state.editEfforts[`${body.provider}:${body.model}`];
+  if(body.model===undefined || (body.model==='' && body.provider!=='codex'))throw new Error('请先读取并选择模型。');
   state.settings=await api('settings',body);for(const key of settingsKeyIDs())f.elements[`${key}_key`].value='';
+  state.savedCustomModels=[...state.models.compatible];
   renderKeyStates();
   renderConnection();$('#settings-status').textContent='设置已保存。';
   f.elements.clear_keys.checked=false;
   if(test){
-    $('#settings-status').textContent=state.settings.provider==='codex'?'设置已保存，正在用 ChatGPT 登录测试 Codex；首次连接可能需要一两分钟…':'设置已保存，正在测试模型…';
+    $('#settings-status').textContent='设置已保存，正在按所选模型与强度测试连接；高强度可能需要数分钟…';
     try {await api('test-model',{});if(state.settings.provider==='codex')await refreshCodexStatus();$('#settings-status').textContent='模型连接成功。';}
     catch(error){$('#settings-status').textContent=error.message;throw error;}
   }else $('#settings-dialog').close();
@@ -283,6 +318,7 @@ document.addEventListener('click',async event=>{
   await work(messages[action] || '处理中…',async()=>{
     if(action==='clarify'||action==='clarify-again'){await clarify();}
     if(action==='save-test')await saveSettings(true);
+    if(action==='load-models')await loadModelOptions();
     if(action==='codex-status')await refreshCodexStatus();
     if(action==='confirm-hypothesis'){
       const hypothesis=readDraft();
@@ -327,10 +363,17 @@ document.addEventListener('change',async event=>{
     state.uploads[el.dataset.upload]=await file.text();el.nextElementSibling.textContent=`已载入 ${file.name}`;return;
   }
   if(el.closest('#settings-form')&&el.name==='provider'){
-    const model=$('#settings-form').elements.model;
-    state.editModels[state.editProvider]=model.value;state.editProvider=el.value;
-    model.value=state.editModels[el.value] ?? providerInfo(el.value)?.default_model ?? '';
+    state.editProvider=el.value;
     updateProviderFields();if(el.value==='codex')await refreshCodexStatus();return;
+  }
+  if(el.closest('#settings-form')&&el.name==='model'){
+    state.editModels[state.editProvider]=el.value;renderEffortOptions();return;
+  }
+  if(el.closest('#settings-form')&&el.name==='reasoning_effort'){
+    state.editEfforts[`${state.editProvider}:${state.editModels[state.editProvider]}`]=el.value;return;
+  }
+  if(el.closest('#settings-form')&&el.name==='compatible_base_url'){
+    state.models.compatible=[];delete state.editModels.compatible;renderModelOptions();return;
   }
   if(!el.closest('#draft-form'))return;
   readDraft();

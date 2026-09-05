@@ -22,7 +22,7 @@ var modelProviders = []ModelProvider{
 	{"kimi", "Kimi（月之暗面）", "kimi-k2.6", "使用 Moonshot 国内 API Key（api.moonshot.cn）。其他地区的 Key 请配合对应的自定义接口地址。", "https://api.moonshot.cn/v1/chat/completions"},
 	{"claude", "Claude（Anthropic）", "claude-haiku-4-5-20251001", "使用 Anthropic 官方 API Key，接入 Messages API；模型需支持结构化输出。", "https://api.anthropic.com/v1/messages"},
 	{"grok", "Grok（xAI）", "grok-4.6", "使用 xAI 开放平台 API Key；模型名称以账号实际可用列表为准。", "https://api.x.ai/v1/chat/completions"},
-	{"compatible", "自定义 OpenAI 兼容接口", "", "填写服务的 Base URL、模型 ID 和对应 Key。仅支持 Chat Completions 兼容协议，Key 会发送到你填写的地址。", ""},
+	{"compatible", "自定义 OpenAI 兼容接口", "", "填写服务的 Base URL 和对应 Key，再读取模型列表。仅支持 Chat Completions 兼容协议，Key 会发送到你填写的地址。", ""},
 }
 
 func providerByID(id string) (ModelProvider, bool) {
